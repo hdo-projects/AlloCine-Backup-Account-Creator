@@ -1,5 +1,9 @@
 # -*- coding: utf-8 -*-
+"""Sauvegarde au format CSV les notes de films et séries d'un profil AlloCiné."""
+
+import argparse
 import csv
+import os
 import re
 import sys
 import time
@@ -10,10 +14,9 @@ if sys.version_info < (3, 7):
     print("La version de Python doit être 3.7 ou supérieure. Le programme ne peut pas continuer")
     sys.exit(1)
 
-# Vérification des bibliothèques nécessaires
 try:
-    from bs4 import BeautifulSoup
     import requests
+    from bs4 import BeautifulSoup
 except ImportError as erreur:
     print("Dépendance manquante : " + str(erreur.name))
     print("Installez les dépendances avec : python -m pip install -r requirements.txt")
@@ -41,6 +44,12 @@ CLASSE_NOTE = "rating-mdl"
 EXPRESSION_IDENTIFIANT = re.compile(r"membre-[A-Za-z0-9=_-]+")
 EXPRESSION_NOTE = re.compile(r"^n([0-5])([0-5])$")
 EXPRESSION_PREFIXE_AFFICHE = re.compile(r"^\s*poster de\s+", re.IGNORECASE)
+
+
+def extraire_identifiant(profil):
+    """Extrait l'identifiant membre d'une URL de profil, ou None s'il est introuvable."""
+    correspondance = EXPRESSION_IDENTIFIANT.search(profil)
+    return correspondance.group(0) if correspondance else None
 
 
 def construire_url(identifiant_utilisateur, type_media, numero_de_page):
@@ -118,7 +127,7 @@ def extraire_note(balise_media):
 
 def extraire_notes(code_html):
     """Renvoie la liste des couples (nom, note) trouvés dans une page de profil."""
-    page = BeautifulSoup(code_html, 'html.parser')
+    page = BeautifulSoup(code_html, "html.parser")
     notes = []
     for balise_media in page.find_all("div", class_=CLASSE_CARTE):
         nom_media = extraire_nom(balise_media)
@@ -129,9 +138,9 @@ def extraire_notes(code_html):
     return notes
 
 
-def ecrire_csv(notes, type_media):
+def ecrire_csv(notes, type_media, dossier_sortie):
     """Écrit les notes dans un CSV lisible par Excel francophone et renvoie son chemin."""
-    chemin = "liste_notes_{}.csv".format(type_media)
+    chemin = os.path.join(dossier_sortie, "liste_notes_{}.csv".format(type_media))
     with open(chemin, "w", encoding="utf-8-sig", newline="") as fichier:
         redacteur = csv.writer(fichier, delimiter=";")
         redacteur.writerow(("Nom", "Note"))
@@ -139,7 +148,7 @@ def ecrire_csv(notes, type_media):
     return chemin
 
 
-def recuperer_notes(session, identifiant_utilisateur, type_media):
+def recuperer_notes(session, identifiant_utilisateur, type_media, dossier_sortie, delai):
     """Sauvegarde les notes d'un type de média. Renvoie True si un fichier a été écrit."""
     print("Démarrage de la récupération des notes pour le type de média " + type_media)
 
@@ -163,7 +172,7 @@ def recuperer_notes(session, identifiant_utilisateur, type_media):
     print("Extraction des pages, le processus peut être long...")
 
     for numero_de_page in range(2, nombre_de_pages + 1):
-        time.sleep(DELAI_ENTRE_PAGES)
+        time.sleep(delai)
         url = construire_url(identifiant_utilisateur, type_media, numero_de_page)
         reponse = telecharger(session, url)
         if reponse is None:
@@ -174,38 +183,62 @@ def recuperer_notes(session, identifiant_utilisateur, type_media):
             break
         notes.extend(notes_de_la_page)
 
-    chemin = ecrire_csv(notes, type_media)
+    chemin = ecrire_csv(notes, type_media, dossier_sortie)
     print("Fin de la récupération des notes, {} {} sauvegardés dans {}".format(
         len(notes), type_media, chemin))
     return True
 
 
-def main():
-    # Vérification des paramètres
-    if len(sys.argv) != 2:
-        print("Utilisation : python Allocine_Backup_Account_Creator.py <URL utilisateur>")
-        sys.exit(1)
+def analyser_arguments():
+    analyseur = argparse.ArgumentParser(
+        description="Sauvegarde au format CSV les notes de films et séries d'un profil AlloCiné.")
+    analyseur.add_argument(
+        "profil",
+        help="URL du profil AlloCiné, ou identifiant de la forme membre-XXXXXXXX")
+    analyseur.add_argument(
+        "-s", "--sortie", default=".", metavar="DOSSIER",
+        help="dossier de destination des fichiers CSV (par défaut : le dossier courant)")
+    analyseur.add_argument(
+        "-d", "--delai", type=float, default=DELAI_ENTRE_PAGES, metavar="SECONDES",
+        help="pause entre deux pages, pour ménager le site (par défaut : {})".format(
+            DELAI_ENTRE_PAGES))
+    return analyseur.parse_args()
 
-    # Récupération de l'identifiant utilisateur dans l'URL du profil
-    correspondance = EXPRESSION_IDENTIFIANT.search(sys.argv[1])
-    if correspondance is None:
+
+def main():
+    arguments = analyser_arguments()
+
+    identifiant_utilisateur = extraire_identifiant(arguments.profil)
+    if identifiant_utilisateur is None:
         print("L'identifiant utilisateur n'a pas pu être récupéré, vérifiez le paramètre passé")
         print("L'URL attendue est de la forme https://www.allocine.fr/membre-XXXXXXXX/")
-        sys.exit(1)
-    identifiant_utilisateur = correspondance.group(0)
+        return 1
+    print("Identifiant utilisateur : " + identifiant_utilisateur)
+
+    try:
+        os.makedirs(arguments.sortie, exist_ok=True)
+    except OSError as erreur:
+        print("Le dossier de sortie n'a pas pu être créé : {}".format(erreur))
+        return 1
 
     session = creer_session()
     resultats = [
-        recuperer_notes(session, identifiant_utilisateur, type_media)
+        recuperer_notes(
+            session, identifiant_utilisateur, type_media, arguments.sortie, arguments.delai)
         for type_media in TYPES_DE_MEDIA
     ]
 
     if not any(resultats):
         print("Aucune note n'a pu être sauvegardée")
-        sys.exit(1)
-    print("Les fichiers ont été sauvegardés dans le répertoire courant au format CSV")
-    sys.exit(0)
+        return 1
+    print("Les fichiers ont été sauvegardés au format CSV dans "
+          + os.path.abspath(arguments.sortie))
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        sys.exit(main())
+    except KeyboardInterrupt:
+        print("\nInterruption demandée par l'utilisateur")
+        sys.exit(130)
