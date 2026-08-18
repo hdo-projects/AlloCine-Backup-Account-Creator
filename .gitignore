@@ -102,3 +102,6 @@ venv.bak/
 
 # mypy
 .mypy_cache/
+
+# Fichiers de sortie du script
+liste_notes_*.csv

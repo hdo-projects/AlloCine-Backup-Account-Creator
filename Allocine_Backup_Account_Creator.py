@@ -1,4 +1,5 @@
 # -*- coding: utf-8 -*-
+import csv
 import re
 import sys
 import time
@@ -128,6 +129,16 @@ def extraire_notes(code_html):
     return notes
 
 
+def ecrire_csv(notes, type_media):
+    """Écrit les notes dans un CSV lisible par Excel francophone et renvoie son chemin."""
+    chemin = "liste_notes_{}.csv".format(type_media)
+    with open(chemin, "w", encoding="utf-8-sig", newline="") as fichier:
+        redacteur = csv.writer(fichier, delimiter=";")
+        redacteur.writerow(("Nom", "Note"))
+        redacteur.writerows(notes)
+    return chemin
+
+
 def recuperer_notes(session, identifiant_utilisateur, type_media):
     """Sauvegarde les notes d'un type de média. Renvoie True si un fichier a été écrit."""
     print("Démarrage de la récupération des notes pour le type de média " + type_media)
@@ -163,13 +174,9 @@ def recuperer_notes(session, identifiant_utilisateur, type_media):
             break
         notes.extend(notes_de_la_page)
 
-    # Création du fichier de sortie
-    liste_notes = open("liste_notes_" + type_media + ".csv", "w", encoding="utf-8")
-    liste_notes.write("Nom;Note" + "\n")
-    for nom_film, note_film in notes:
-        liste_notes.write(nom_film + ";" + note_film + "\n")
-    liste_notes.close()
-    print("Fin de la récupération des notes, " + str(len(notes)) + " " + type_media + " sauvegardés")
+    chemin = ecrire_csv(notes, type_media)
+    print("Fin de la récupération des notes, {} {} sauvegardés dans {}".format(
+        len(notes), type_media, chemin))
     return True
 
 
