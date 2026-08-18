@@ -34,7 +34,12 @@ PAGE_SONDE = 999
 # Garde-fou si la redirection ci-dessus venait à disparaître.
 PAGES_MAX = 200
 
+CLASSE_CARTE = "userprofile-entity-card-simple"
+CLASSE_TITRE = "meta-title-link"
+CLASSE_NOTE = "rating-mdl"
 EXPRESSION_IDENTIFIANT = re.compile(r"membre-[A-Za-z0-9=_-]+")
+EXPRESSION_NOTE = re.compile(r"^n([0-5])([0-5])$")
+EXPRESSION_PREFIXE_AFFICHE = re.compile(r"^\s*poster de\s+", re.IGNORECASE)
 
 
 def construire_url(identifiant_utilisateur, type_media, numero_de_page):
@@ -79,19 +84,47 @@ def detecter_nombre_de_pages(session, identifiant_utilisateur, type_media):
     return nombre_de_pages
 
 
+def extraire_nom(balise_media):
+    """Récupère le titre du média dans le lien vers sa fiche.
+
+    L'attribut alt de l'affiche sert de repli, après retrait du préfixe
+    « poster de » qu'AlloCiné y ajoute.
+    """
+    balise_titre = balise_media.find("a", class_=CLASSE_TITRE)
+    if balise_titre is not None:
+        nom = balise_titre.get_text(strip=True) or (balise_titre.get("title") or "").strip()
+        if nom:
+            return nom
+
+    balise_image = balise_media.find("img")
+    if balise_image is None:
+        return None
+    nom = EXPRESSION_PREFIXE_AFFICHE.sub("", balise_image.get("alt") or "").strip()
+    return nom or None
+
+
+def extraire_note(balise_media):
+    """Convertit la classe CSS de notation (par exemple « n45 ») en note (« 4,5 »)."""
+    balise_note = balise_media.find("div", class_=CLASSE_NOTE)
+    if balise_note is None:
+        return None
+    for classe in balise_note.get("class", []):
+        correspondance = EXPRESSION_NOTE.match(classe)
+        if correspondance:
+            return correspondance.group(1) + "," + correspondance.group(2)
+    return None
+
+
 def extraire_notes(code_html):
     """Renvoie la liste des couples (nom, note) trouvés dans une page de profil."""
     page = BeautifulSoup(code_html, 'html.parser')
     notes = []
-    for balise_film in page.find_all("div", class_="card entity-card-simple userprofile-entity-card-simple"):
-        # Récupérer le nom du film
-        nom_film = balise_film.find('img')['alt']
-        # Compile l'expression régulière pour la classe de la note
-        expression_reguliere_class = re.compile('rating-mdl n[0-5][0-5] stareval-stars')
-        # Extrait la note de la classe
-        note_film_html = balise_film.find("div", {"class": expression_reguliere_class})['class'][1][1:]
-        note_film = (note_film_html[:1] + ',' + note_film_html[1:])
-        notes.append((nom_film, note_film))
+    for balise_media in page.find_all("div", class_=CLASSE_CARTE):
+        nom_media = extraire_nom(balise_media)
+        note_media = extraire_note(balise_media)
+        if nom_media is None or note_media is None:
+            continue
+        notes.append((nom_media, note_media))
     return notes
 
 
