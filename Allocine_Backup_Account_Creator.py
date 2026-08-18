@@ -1,31 +1,49 @@
 # -*- coding: utf-8 -*-
-import sys
 import re
-import os
+import sys
+from urllib.parse import parse_qs, urlparse
+
+# La vérification de version doit précéder l'import des dépendances tierces.
+if sys.version_info < (3, 7):
+    print("La version de Python doit être 3.7 ou supérieure. Le programme ne peut pas continuer")
+    sys.exit(1)
 
 # Vérification des bibliothèques nécessaires
 try:
     from bs4 import BeautifulSoup
     import requests
-except:
-    print("Un ou plusieurs modules ne sont pas installés, l'installation va commencer")
-    os.system("pip3 install beautifulsoup4")
-    os.system("pip3 install requests")
-    from bs4 import BeautifulSoup
-    from bs4 import requests
+except ImportError as erreur:
+    print("Dépendance manquante : " + str(erreur.name))
+    print("Installez les dépendances avec : python -m pip install -r requirements.txt")
+    sys.exit(1)
 
+# AlloCiné redirige une page hors limites vers la dernière page réelle du profil.
+PAGE_SONDE = 999
+EXPRESSION_IDENTIFIANT = re.compile(r"membre-[A-Za-z0-9=_-]+")
+
+
+def detecter_nombre_de_pages(identifiant_utilisateur, type_media):
+    """Déduit le nombre de pages de la redirection appliquée à une page hors limites."""
+    url = ('http://www.allocine.fr/' + identifiant_utilisateur + '/' + type_media
+           + '/?page=' + str(PAGE_SONDE))
+    reponse = requests.get(url)
+    valeurs = parse_qs(urlparse(reponse.url).query).get("page")
+    if not valeurs or not valeurs[0].isdigit():
+        # Plus de paramètre de pagination : le profil tient sur une seule page.
+        return 1
+    nombre_de_pages = int(valeurs[0])
+    if nombre_de_pages >= PAGE_SONDE:
+        # Aucune redirection n'a eu lieu, la valeur lue n'est pas exploitable.
+        return 1
+    return nombre_de_pages
 
 
 def recuperer_notes(identifiant_utilisateur, type_media):
     print("Démarrage de la récupération des notes pour le type de média " + type_media)
     code_html = ""
-    nombre_de_pages = 1
 
     # Récupération du nombre de pages liées au profil utilisateur
-    if "page" in requests.get('http://www.allocine.fr/' + identifiant_utilisateur + '/' + type_media + '/?page=999').url:
-        nombre_de_pages = int(requests.get(
-            'http://www.allocine.fr/' + identifiant_utilisateur + '/' + type_media + '/?page=999').url.rsplit('=', 1)[
-                1])
+    nombre_de_pages = detecter_nombre_de_pages(identifiant_utilisateur, type_media)
     print("Nombre de pages : " + str(nombre_de_pages))
     print("Extraction des pages, le processus peut être long...")
     for i in range(1, nombre_de_pages + 1):
@@ -35,7 +53,7 @@ def recuperer_notes(identifiant_utilisateur, type_media):
     # Parsing de la page HTML entière
     recherche_html = BeautifulSoup(code_html, 'html.parser')
     nombre_de_medias_trouves = 0
-    # Création du fichier de sorite
+    # Création du fichier de sortie
     liste_notes = open("liste_notes_" + type_media + ".csv", "w", encoding="utf-8")
     liste_notes.write("Nom;Note" + "\n")
     # Pour chaque film
@@ -54,28 +72,24 @@ def recuperer_notes(identifiant_utilisateur, type_media):
 
 
 def main():
-    # Vérification de la version de Python
-    if sys.version_info < (3, 7):
-        print("La version de Python doit être supérieure à 3.7. Le programme ne peut pas continuer")
-        exit(0)
-
     # Vérification des paramètres
     if len(sys.argv) != 2:
-        print("Aucun argument passé en pramètre")
         print("Utilisation : python Allocine_Backup_Account_Creator.py <URL utilisateur>")
-        exit(0)
+        sys.exit(1)
 
     # Récupération de l'identifiant utilisateur dans l'URL du profil
-    identifiant_utilisateur = re.search('membre-([A-Z]|[0-9])*', sys.argv[1]).group(0)
-    if "membre" not in identifiant_utilisateur:
+    correspondance = EXPRESSION_IDENTIFIANT.search(sys.argv[1])
+    if correspondance is None:
         print("L'identifiant utilisateur n'a pas pu être récupéré, vérifiez le paramètre passé")
-        print("Utilisation : python Allocine_Backup_Account_Creator.py <URL utilisateur>")
-        exit(0)
+        print("L'URL attendue est de la forme http://www.allocine.fr/membre-XXXXXXXX/")
+        sys.exit(1)
+    identifiant_utilisateur = correspondance.group(0)
 
     recuperer_notes(identifiant_utilisateur, "films")
     recuperer_notes(identifiant_utilisateur, "series")
     print("Les fichiers ont été sauvegardés dans le répertoire courant au format CSV")
-    exit(0)
+    sys.exit(0)
+
 
 if __name__ == "__main__":
     main()
